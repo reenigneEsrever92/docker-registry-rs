@@ -1,0 +1,21 @@
+[package]
+name = "docker-registry-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.7.4" }
+tower-http = { version = "0.5", features = ["trace", "normalize-path"] }
+oci-spec = "0.6"
+clap = "*"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+dkregistry = "0.5"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+serde = "1"
+serde_json = "1"
+sha256 = "1.5"
+rand = "0.8"
+thiserror = "1"
+futures = "0.3.30"
+uuid = { version = "1.7", features = ["v4"] }

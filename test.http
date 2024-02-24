@@ -1,0 +1,29 @@
+POST http://localhost:8080/v2/test/blobs/uploads
+
+###
+
+PUT http://localhost:8080/v2/test/blobs/hash
+
+###
+
+GET http://localhost:8080/v2
+
+###
+
+DELETE http://localhost:8080/v2/hello/blobs/uploads/7a23a686eb16f26b1204196bab6fa68457382746f5d107ef8d5a31b827136759
+
+###
+
+HEAD http://localhost:8080/v2/hello/manifests/latest
+
+###
+
+PATCH http://localhost:8080/v2/hello/blobs/uploads/92694445-adc0-4da3-a764-355997284024
+#Transfer-Encoding: chunked
+Content-Type: application/octet-stream
+
+9f
+..\b............0\f..({........"
+eJ...^6odwC+....^5'|...?U...yI..|.C.#.\bx.DD....f.r.2....^.G...K>..Rk.f...17......Y.[.....S..r.t0.k2..i........F.._.......t/..
+..
+0
