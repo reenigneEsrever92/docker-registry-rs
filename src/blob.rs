@@ -26,10 +26,13 @@ pub async fn post(
 }
 
 pub async fn put(
+    State(state): State<DockerRegistryRS>,
     Path((name, id)): Path<(String, String)>,
     Query(digest): Query<String>,
-) -> Response {
-    todo!()
+) -> impl IntoResponse {
+    state.db.commit_upload(name, id, digest).await.unwrap();
+
+    (StatusCode::ACCEPTED, [(header::RANGE)])
 }
 
 pub async fn delete(
