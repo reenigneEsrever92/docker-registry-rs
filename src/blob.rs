@@ -1,9 +1,13 @@
+use crate::db::UploadResult;
 use crate::DockerRegistryRS;
 use axum::body::{Body, HttpBody};
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, HeaderName, StatusCode};
 use axum::response::{IntoResponse, Response};
 use futures::StreamExt;
+use serde::Deserialize;
+use sha256::digest;
+use std::collections::HashMap;
 use tracing::{debug, info};
 
 pub async fn post(
@@ -11,7 +15,7 @@ pub async fn post(
     Path(name): Path<String>,
     request: Request,
 ) -> impl IntoResponse {
-    debug!(?request, "Post blob");
+    info!(?request, "POST blob");
 
     let id = state.db.create_upload(&name).await.unwrap();
 
@@ -25,20 +29,42 @@ pub async fn post(
         .unwrap()
 }
 
+#[derive(Debug, Deserialize)]
+pub struct QueryParams {
+    digest: String,
+}
+
 pub async fn put(
     State(state): State<DockerRegistryRS>,
     Path((name, id)): Path<(String, String)>,
-    Query(digest): Query<String>,
+    Query(params): Query<QueryParams>,
 ) -> impl IntoResponse {
-    state.db.commit_upload(&name, &id, &digest).await.unwrap();
+    info!(?name, ?id, ?params, "PUT blob");
 
-    (StatusCode::ACCEPTED, [(header::LOCATION, digest)])
+    state
+        .db
+        .commit_upload(&name, &id, &params.digest)
+        .await
+        .unwrap();
+
+    let digest = params.digest;
+    let url = format!("/v2/{name}/blobs/{digest}");
+
+    (
+        StatusCode::ACCEPTED,
+        [
+            (header::LOCATION, url),
+            (HeaderName::from_static("Docker-Content-Digest"), digest),
+        ],
+    )
 }
 
 pub async fn delete(
     State(state): State<DockerRegistryRS>,
     Path((name, id)): Path<(String, String)>,
 ) -> impl IntoResponse {
+    info!(?name, ?id, "DELETE blob");
+
     state.db.delete_upload(&name, &id).await.unwrap();
     StatusCode::NO_CONTENT
 }
@@ -48,11 +74,13 @@ pub async fn patch(
     Path((name, id)): Path<(String, String)>,
     request: Request,
 ) -> impl IntoResponse {
-    debug!(?request, "Patch blob");
+    info!(?request, "PATCH blob");
 
     let body = request.into_body();
 
-    let (start, end) = state.db.write_upload(&name, &id, body.into_data_stream())
+    let (start, end) = state
+        .db
+        .write_upload(&name, &id, body.into_data_stream())
         .await
         .unwrap();
 
@@ -60,4 +88,23 @@ pub async fn patch(
         StatusCode::ACCEPTED,
         [(header::RANGE, format!("{start}-{end}"))],
     )
+}
+
+pub async fn head(
+    State(state): State<DockerRegistryRS>,
+    Path((_name, digest)): Path<(String, String)>,
+) -> impl IntoResponse {
+    info!(?digest, "HEAD blob");
+
+    match state.db.get_blob(&digest).await {
+        Ok(_) => Response::builder()
+            .status(StatusCode::OK)
+            .header("Docker-Content-Digest", digest)
+            .body(Body::empty())
+            .unwrap(),
+        Err(_) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::empty())
+            .unwrap(),
+    }
 }

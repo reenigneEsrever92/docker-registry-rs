@@ -2,7 +2,7 @@ POST http://localhost:8080/v2/test/blobs/uploads
 
 ###
 
-PUT http://localhost:8080/v2/test/blobs/hash
+PUT http://localhost:8080/v2/test/blobs/uploads/hash?digest=5
 
 ###
 

@@ -25,6 +25,7 @@ async fn main() {
     let app = Router::new()
         .route("/v2", get(index::get))
         .route("/v2/", get(index::get))
+        .route("/v2/:name/blobs/:digest", head(blob::head))
         .route("/v2/:name/blobs/uploads", post(blob::post))
         .route("/v2/:name/blobs/uploads/", post(blob::post))
         .route("/v2/:name/blobs/uploads/:id", put(blob::put))

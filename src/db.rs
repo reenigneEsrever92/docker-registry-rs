@@ -5,6 +5,7 @@ use rand::distributions::Alphanumeric;
 use rand::Rng;
 use std::io;
 use std::path::PathBuf;
+use axum::response::IntoResponse;
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
@@ -14,14 +15,16 @@ pub const REGISTRY_PATH: &str = ".local/share/registry-rs";
 pub const REPOSITORY_FOLDER: &str = "repositories";
 pub const UPLOADS_FOLDER: &str = "_uploads";
 pub const LAYERS_FOLDER: &str = "_layers";
-pub const BLOB_PATH: &str = "blobs";
+pub const BLOB_FOLDER: &str = "blobs";
 
 #[derive(Debug, Error)]
 pub enum UploadError {
     #[error("Filesystem Error")]
     FilesystemError(#[from] io::Error),
-    #[error("Upload does not exist")]
-    UploadNotExists { hash: String },
+    #[error("Upload does not exist - id: {id}")]
+    UploadNotExists { id: String },
+    #[error("Upload does not exist - digest: {digest}")]
+    BlobNotExists { digest: String },
     #[error("Axum error")]
     AxumError(#[from] axum::Error),
     #[error("Invalid digest: {0}")]
@@ -54,9 +57,19 @@ impl FilesystemDB {
         Self { config }
     }
 
+    pub async fn get_blob(&self, digest: &str) -> UploadResult<()> {
+        let blob_path = self.get_blob_path(digest)?;
+
+        if tokio::fs::try_exists(blob_path).await? {
+            Ok(())
+        } else {
+            Err(UploadError::BlobNotExists { digest: digest.to_string() })
+        }
+    }
+
     pub async fn create_upload(&self, name: &str) -> UploadResult<Uuid> {
         let id = Uuid::new_v4();
-        let path = self.get_uploads_folder(name, &id.to_string());
+        let path = self.get_upload_path(name, &id.to_string());
 
         tokio::fs::create_dir_all(PathBuf::from(&path).parent().unwrap()).await?;
 
@@ -66,14 +79,17 @@ impl FilesystemDB {
     }
 
     pub async fn delete_upload(&self, name: &str, id: &str) -> UploadResult<()> {
-        tokio::fs::remove_file(self.get_uploads_folder(name, id)).await?;
+        tokio::fs::remove_file(self.get_upload_path(name, id)).await?;
         Ok(())
     }
 
     pub async fn commit_upload(&self, name: &str, id: &str, digest: &str) -> UploadResult<()> {
-        let upload_path = self.get_uploads_folder(name, id);
-        let layers_path = self.get_layers_folder(name, digest)?;
+        let upload_path = self.get_upload_path(name, id);
+        let layers_path = self.get_blob_path(digest)?;
 
+        debug!(?upload_path, layers_path, "Commiting layer");
+
+        tokio::fs::create_dir_all(PathBuf::from(&layers_path).parent().unwrap()).await?;
         tokio::fs::copy(upload_path, layers_path).await?;
 
         Ok(())
@@ -88,7 +104,7 @@ impl FilesystemDB {
     where
         D: Stream<Item = Result<Bytes, Error>> + Unpin,
     {
-        let mut file = tokio::fs::File::open(self.get_uploads_folder(name, id)).await?;
+        let mut file = tokio::fs::File::open(self.get_upload_path(name, id)).await?;
 
         let bytes_in_file = file.metadata().await?.len() as usize;
         let mut bytes_written = 0;
@@ -104,6 +120,8 @@ impl FilesystemDB {
             debug!(?file, ?bytes_in_file, "Written bytes")
         }
 
+        file.flush().await?;
+
         Ok((bytes_in_file, bytes_in_file + bytes_written))
     }
 
@@ -111,13 +129,14 @@ impl FilesystemDB {
         format!("{}/{REPOSITORY_FOLDER}/{name}", self.config.base_path)
     }
 
-    fn get_uploads_folder(&self, name: &str, id: &str) -> String {
+    fn get_upload_path(&self, name: &str, id: &str) -> String {
         format!("{}/{UPLOADS_FOLDER}/{id}", self.get_repository_folder(name))
     }
 
-    fn get_layers_folder(&self, name: &str, digest: &str) -> UploadResult<String> {
-         if let Some((algo, hash)) = digest.split_once('.') {
-             Ok(format!("{}/{LAYERS_FOLDER}/{algo}/{hash}", self.get_repository_folder(name)))
+    fn get_blob_path(&self, digest: &str) -> UploadResult<String> {
+         if let Some((algo, hash)) = digest.split_once(':') {
+             let bucket = hash.chars().take(2).collect::<String>();
+             Ok(format!("{}/{BLOB_FOLDER}/{algo}/{bucket}/{hash}", self.config.base_path))
          } else {
              Err(UploadError::InvalidDigest(digest.to_string()))
          }
