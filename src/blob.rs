@@ -30,9 +30,9 @@ pub async fn put(
     Path((name, id)): Path<(String, String)>,
     Query(digest): Query<String>,
 ) -> impl IntoResponse {
-    state.db.commit_upload(name, id, digest).await.unwrap();
+    state.db.commit_upload(&name, &id, &digest).await.unwrap();
 
-    (StatusCode::ACCEPTED, [(header::RANGE)])
+    (StatusCode::ACCEPTED, [(header::LOCATION, digest)])
 }
 
 pub async fn delete(
