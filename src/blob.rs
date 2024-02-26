@@ -50,13 +50,12 @@ pub async fn put(
     let digest = params.digest;
     let url = format!("/v2/{name}/blobs/{digest}");
 
-    (
-        StatusCode::ACCEPTED,
-        [
-            (header::LOCATION, url),
-            (HeaderName::from_static("Docker-Content-Digest"), digest),
-        ],
-    )
+    Response::builder()
+        .status(StatusCode::ACCEPTED)
+        .header(header::LOCATION, url)
+        .header("Docker-Content-Digest", digest)
+        .body(Body::empty())
+        .unwrap()
 }
 
 pub async fn delete(

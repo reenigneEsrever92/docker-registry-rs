@@ -15,7 +15,9 @@ struct DockerRegistryRS {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> color_eyre::eyre::Result<()> {
+    color_eyre::install()?;
+
     tracing_subscriber::fmt()
         .with_max_level(Level::DEBUG)
         .init();
@@ -32,10 +34,11 @@ async fn main() {
         .route("/v2/:name/blobs/uploads/:id", delete(blob::delete))
         .route("/v2/:name/blobs/uploads/:id", patch(blob::patch))
         .route("/v2/:name/manifests/:reference", head(manifest::head))
+        .route("/v2/:name/manifests/:reference", put(manifest::put))
         .with_state(docker_registry_rs);
         // .layer(TraceLayer::new_for_http());
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-    let serve = axum::serve(listener, app);
-    serve.await.unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+
+    Ok(axum::serve(listener, app).await?)
 }

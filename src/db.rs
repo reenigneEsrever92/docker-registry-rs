@@ -1,11 +1,13 @@
 use axum::body::Bytes;
+use axum::response::IntoResponse;
 use axum::Error;
+use dkregistry::reference::Reference;
+use dkregistry::v2::manifest::ManifestSchema2Spec;
 use futures::{Stream, StreamExt};
 use rand::distributions::Alphanumeric;
 use rand::Rng;
 use std::io;
 use std::path::PathBuf;
-use axum::response::IntoResponse;
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
@@ -28,7 +30,7 @@ pub enum UploadError {
     #[error("Axum error")]
     AxumError(#[from] axum::Error),
     #[error("Invalid digest: {0}")]
-    InvalidDigest(String)
+    InvalidDigest(String),
 }
 
 pub type UploadResult<T> = Result<T, UploadError>;
@@ -57,13 +59,19 @@ impl FilesystemDB {
         Self { config }
     }
 
+    pub async fn create_manifest(&self, name: &str, reference: &Reference, manifest: &ManifestSchema2Spec) {
+       todo!()
+    }
+
     pub async fn get_blob(&self, digest: &str) -> UploadResult<()> {
         let blob_path = self.get_blob_path(digest)?;
 
         if tokio::fs::try_exists(blob_path).await? {
             Ok(())
         } else {
-            Err(UploadError::BlobNotExists { digest: digest.to_string() })
+            Err(UploadError::BlobNotExists {
+                digest: digest.to_string(),
+            })
         }
     }
 
@@ -87,10 +95,11 @@ impl FilesystemDB {
         let upload_path = self.get_upload_path(name, id);
         let layers_path = self.get_blob_path(digest)?;
 
-        debug!(?upload_path, layers_path, "Commiting layer");
+        debug!(?upload_path, ?layers_path, "Committing layer");
 
         tokio::fs::create_dir_all(PathBuf::from(&layers_path).parent().unwrap()).await?;
-        tokio::fs::copy(upload_path, layers_path).await?;
+        tokio::fs::copy(&upload_path, &layers_path).await?;
+        tokio::fs::remove_file(&upload_path).await?;
 
         Ok(())
     }
@@ -104,25 +113,24 @@ impl FilesystemDB {
     where
         D: Stream<Item = Result<Bytes, Error>> + Unpin,
     {
-        let mut file = tokio::fs::File::open(self.get_upload_path(name, id)).await?;
+        let mut file = tokio::fs::File::create(self.get_upload_path(name, id)).await?;
 
         let bytes_in_file = file.metadata().await?.len() as usize;
         let mut bytes_written = 0;
 
         while let Some(bytes) = data.next().await {
-            debug!(?bytes, "Received bytes");
-
             let bytes = bytes?;
+
             bytes_written += bytes.len();
 
             file.write_all(&bytes).await?;
 
-            debug!(?file, ?bytes_in_file, "Written bytes")
+            debug!(?bytes_written, "Written bytes")
         }
 
         file.flush().await?;
 
-        Ok((bytes_in_file, bytes_in_file + bytes_written))
+        Ok((bytes_in_file, bytes_in_file + bytes_written - 1))
     }
 
     fn get_repository_folder(&self, name: &str) -> String {
@@ -134,11 +142,14 @@ impl FilesystemDB {
     }
 
     fn get_blob_path(&self, digest: &str) -> UploadResult<String> {
-         if let Some((algo, hash)) = digest.split_once(':') {
-             let bucket = hash.chars().take(2).collect::<String>();
-             Ok(format!("{}/{BLOB_FOLDER}/{algo}/{bucket}/{hash}", self.config.base_path))
-         } else {
-             Err(UploadError::InvalidDigest(digest.to_string()))
-         }
+        if let Some((algo, hash)) = digest.split_once(':') {
+            let bucket = hash.chars().take(2).collect::<String>();
+            Ok(format!(
+                "{}/{BLOB_FOLDER}/{algo}/{bucket}/{hash}",
+                self.config.base_path
+            ))
+        } else {
+            Err(UploadError::InvalidDigest(digest.to_string()))
+        }
     }
 }

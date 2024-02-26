@@ -19,3 +19,4 @@ rand = "0.8"
 thiserror = "1"
 futures = "0.3.30"
 uuid = { version = "1.7", features = ["v4"] }
+color-eyre = "0.6"
