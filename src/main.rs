@@ -1,8 +1,8 @@
 use axum::routing::{delete, get, head, patch, post, put};
 use axum::Router;
-use tower_http::trace::TraceLayer;
 use tracing::Level;
 use crate::db::FilesystemDB;
+use clap::Parser;
 
 mod blob;
 mod index;
@@ -14,9 +14,17 @@ struct DockerRegistryRS {
     db: FilesystemDB
 }
 
+#[derive(Parser)]
+struct App {
+    #[arg(short, long)]
+    port: u16,
+}
+
 #[tokio::main]
 async fn main() -> color_eyre::eyre::Result<()> {
     color_eyre::install()?;
+
+    let args = App::parse();
 
     tracing_subscriber::fmt()
         .with_max_level(Level::DEBUG)
@@ -38,7 +46,7 @@ async fn main() -> color_eyre::eyre::Result<()> {
         .with_state(docker_registry_rs);
         // .layer(TraceLayer::new_for_http());
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
 
     Ok(axum::serve(listener, app).await?)
 }

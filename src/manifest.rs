@@ -7,6 +7,7 @@ use axum::body::Body;
 use axum::Json;
 use dkregistry::v2::manifest::ManifestSchema2Spec;
 use thiserror::Error;
+use tracing::info;
 
 #[derive(Debug, Error)]
 pub enum ManifestError {
@@ -21,8 +22,9 @@ pub async fn head(Path((name, reference)): Path<(String, String)>) -> impl IntoR
 pub async fn put(
     State(state): State<DockerRegistryRS>,
     Path((name, reference)): Path<(String, String)>,
-    Json(manifest): Json<ManifestSchema2Spec>
+    body: String
 ) -> impl IntoResponse {
+    info!("PUT manifest");
     let reference = dkregistry::reference::Reference::from_str(&reference).unwrap();
-    state.db.create_manifest(&name, &reference, &manifest).await;
+    state.db.create_manifest(&name, &reference, &body).await;
 }

@@ -59,8 +59,9 @@ impl FilesystemDB {
         Self { config }
     }
 
-    pub async fn create_manifest(&self, name: &str, reference: &Reference, manifest: &ManifestSchema2Spec) {
-       todo!()
+    pub async fn create_manifest(&self, name: &str, reference: &Reference, manifest: &str) {
+        let digest = sha256::digest(manifest);
+        debug!(?name, ?reference, ?manifest, ?digest, "Creating Manifest")
     }
 
     pub async fn get_blob(&self, digest: &str) -> UploadResult<()> {
