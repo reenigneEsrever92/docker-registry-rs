@@ -8,6 +8,7 @@ mod blob;
 mod index;
 mod db;
 mod manifest;
+mod model;
 
 #[derive(Default, Clone)]
 struct DockerRegistryRS {

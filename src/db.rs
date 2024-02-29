@@ -1,16 +1,12 @@
 use axum::body::Bytes;
-use axum::response::IntoResponse;
 use axum::Error;
 use dkregistry::reference::Reference;
-use dkregistry::v2::manifest::ManifestSchema2Spec;
 use futures::{Stream, StreamExt};
-use rand::distributions::Alphanumeric;
-use rand::Rng;
-use std::io;
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use thiserror::Error;
-use tokio::io::AsyncWriteExt;
-use tracing::{debug, warn};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tracing::debug;
 use uuid::Uuid;
 
 pub const REGISTRY_PATH: &str = ".local/share/registry-rs";
@@ -20,20 +16,22 @@ pub const LAYERS_FOLDER: &str = "_layers";
 pub const BLOB_FOLDER: &str = "blobs";
 
 #[derive(Debug, Error)]
-pub enum UploadError {
+pub enum DBError {
     #[error("Filesystem Error")]
-    FilesystemError(#[from] io::Error),
+    FilesystemError(#[from] std::io::Error),
     #[error("Upload does not exist - id: {id}")]
     UploadNotExists { id: String },
     #[error("Upload does not exist - digest: {digest}")]
     BlobNotExists { digest: String },
     #[error("Axum error")]
     AxumError(#[from] axum::Error),
-    #[error("Invalid digest: {0}")]
+    #[error("Digest is not formatted correctly: {0}")]
     InvalidDigest(String),
+    #[error("Content computes to digest: {computed}, and given was: {given}")]
+    DigestsDontMatch { given: String, computed: String },
 }
 
-pub type UploadResult<T> = Result<T, UploadError>;
+pub type DBResult<T> = Result<T, DBError>;
 
 #[derive(Debug, Clone)]
 pub struct FilesystemDBConfig {
@@ -64,19 +62,19 @@ impl FilesystemDB {
         debug!(?name, ?reference, ?manifest, ?digest, "Creating Manifest")
     }
 
-    pub async fn get_blob(&self, digest: &str) -> UploadResult<()> {
+    pub async fn get_blob(&self, digest: &str) -> DBResult<()> {
         let blob_path = self.get_blob_path(digest)?;
 
         if tokio::fs::try_exists(blob_path).await? {
             Ok(())
         } else {
-            Err(UploadError::BlobNotExists {
+            Err(DBError::BlobNotExists {
                 digest: digest.to_string(),
             })
         }
     }
 
-    pub async fn create_upload(&self, name: &str) -> UploadResult<Uuid> {
+    pub async fn create_upload(&self, name: &str) -> DBResult<Uuid> {
         let id = Uuid::new_v4();
         let path = self.get_upload_path(name, &id.to_string());
 
@@ -87,22 +85,39 @@ impl FilesystemDB {
         Ok(id)
     }
 
-    pub async fn delete_upload(&self, name: &str, id: &str) -> UploadResult<()> {
+    pub async fn delete_upload(&self, name: &str, id: &str) -> DBResult<()> {
         tokio::fs::remove_file(self.get_upload_path(name, id)).await?;
         Ok(())
     }
 
-    pub async fn commit_upload(&self, name: &str, id: &str, digest: &str) -> UploadResult<()> {
+    pub async fn commit_upload(&self, name: &str, id: &str, digest: &str) -> DBResult<()> {
         let upload_path = self.get_upload_path(name, id);
         let layers_path = self.get_blob_path(digest)?;
 
-        debug!(?upload_path, ?layers_path, "Committing layer");
+        let local_digest = self.get_digest(&upload_path).await?;
 
-        tokio::fs::create_dir_all(PathBuf::from(&layers_path).parent().unwrap()).await?;
-        tokio::fs::copy(&upload_path, &layers_path).await?;
-        tokio::fs::remove_file(&upload_path).await?;
+        debug!(
+            ?upload_path,
+            ?layers_path,
+            ?digest,
+            ?local_digest,
+            "Committing layer"
+        );
 
-        Ok(())
+        if local_digest != digest {
+            tokio::fs::remove_file(&upload_path).await?;
+
+            Err(DBError::DigestsDontMatch {
+                given: digest.to_string(),
+                computed: local_digest,
+            })
+        } else {
+            tokio::fs::create_dir_all(PathBuf::from(&layers_path).parent().unwrap()).await?;
+            tokio::fs::copy(&upload_path, &layers_path).await?;
+            tokio::fs::remove_file(&upload_path).await?;
+
+            Ok(())
+        }
     }
 
     pub async fn write_upload<D>(
@@ -110,7 +125,7 @@ impl FilesystemDB {
         name: &str,
         id: &str,
         mut data: D,
-    ) -> UploadResult<(usize, usize)>
+    ) -> DBResult<(usize, usize)>
     where
         D: Stream<Item = Result<Bytes, Error>> + Unpin,
     {
@@ -125,9 +140,9 @@ impl FilesystemDB {
             bytes_written += bytes.len();
 
             file.write_all(&bytes).await?;
-
-            debug!(?bytes_written, "Written bytes")
         }
+
+        debug!(?bytes_written, "Written bytes");
 
         file.flush().await?;
 
@@ -142,7 +157,7 @@ impl FilesystemDB {
         format!("{}/{UPLOADS_FOLDER}/{id}", self.get_repository_folder(name))
     }
 
-    fn get_blob_path(&self, digest: &str) -> UploadResult<String> {
+    fn get_blob_path(&self, digest: &str) -> DBResult<String> {
         if let Some((algo, hash)) = digest.split_once(':') {
             let bucket = hash.chars().take(2).collect::<String>();
             Ok(format!(
@@ -150,7 +165,23 @@ impl FilesystemDB {
                 self.config.base_path
             ))
         } else {
-            Err(UploadError::InvalidDigest(digest.to_string()))
+            Err(DBError::InvalidDigest(digest.to_string()))
         }
+    }
+
+    async fn get_digest(&self, path: &str) -> DBResult<String> {
+        let mut hasher = Sha256::new();
+        let file = tokio::fs::File::open(path).await?;
+        let mut buf = [0; 1024];
+        let mut reader = BufReader::new(file);
+
+        while let bytes_read = reader.read(&mut buf).await? {
+            if bytes_read == 0 {
+                break;
+            }
+            hasher.update(&mut buf[..bytes_read]);
+        }
+
+        unsafe { Ok(format!("{:02x}", hasher.finalize())) }
     }
 }

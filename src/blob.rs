@@ -1,11 +1,11 @@
-use crate::db::UploadResult;
+use crate::db::DBResult;
 use crate::DockerRegistryRS;
 use axum::body::{Body, HttpBody};
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{header, HeaderMap, HeaderName, StatusCode};
 use axum::response::{IntoResponse, Response};
 use futures::StreamExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha256::digest;
 use std::collections::HashMap;
 use tracing::{debug, info};
@@ -29,7 +29,7 @@ pub async fn post(
         .unwrap()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct QueryParams {
     digest: String,
 }
