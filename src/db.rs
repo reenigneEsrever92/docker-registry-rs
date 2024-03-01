@@ -57,9 +57,29 @@ impl FilesystemDB {
         Self { config }
     }
 
-    pub async fn create_manifest(&self, name: &str, reference: &Reference, manifest: &str) {
+    pub async fn create_manifest(
+        &self,
+        name: &str,
+        reference: &str,
+        manifest: &str,
+    ) -> DBResult<String> {
         let digest = sha256::digest(manifest);
-        debug!(?name, ?reference, ?manifest, ?digest, "Creating Manifest")
+        let formatted_digest = format!("sha256:{}", sha256::digest(manifest));
+        let path = self.get_blob_path(&formatted_digest)?;
+
+        debug!(
+            ?name,
+            ?reference,
+            ?manifest,
+            ?formatted_digest,
+            ?path,
+            "Creating Manifest"
+        );
+
+        tokio::fs::create_dir_all(PathBuf::from(&path).parent().unwrap()).await?;
+        tokio::fs::write(path, manifest).await?;
+
+        Ok(digest)
     }
 
     pub async fn get_blob(&self, digest: &str) -> DBResult<()> {
@@ -104,7 +124,7 @@ impl FilesystemDB {
             "Committing layer"
         );
 
-        if local_digest != digest {
+        if local_digest != self.extract_digest(digest)?.1 {
             tokio::fs::remove_file(&upload_path).await?;
 
             Err(DBError::DigestsDontMatch {
@@ -147,6 +167,14 @@ impl FilesystemDB {
         file.flush().await?;
 
         Ok((bytes_in_file, bytes_in_file + bytes_written - 1))
+    }
+
+    fn extract_digest(&self, digest: &str) -> DBResult<(String, String)> {
+        if let Some((algo, hash)) = digest.split_once(':') {
+            Ok((algo.to_string(), hash.to_string()))
+        } else {
+            Err(DBError::InvalidDigest(digest.to_string()))
+        }
     }
 
     fn get_repository_folder(&self, name: &str) -> String {
