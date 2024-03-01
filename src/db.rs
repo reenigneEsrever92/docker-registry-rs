@@ -1,6 +1,6 @@
 use axum::body::Bytes;
 use axum::Error;
-use dkregistry::reference::Reference;
+
 use futures::{Stream, StreamExt};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;

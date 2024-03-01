@@ -1,17 +1,17 @@
-use crate::model::ManifestV2Schema2;
+
 use crate::DockerRegistryRS;
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
+
 use dkregistry::reference::ReferenceParseError;
-use dkregistry::v2::manifest::ManifestSchema2Spec;
-use serde_json::from_str;
-use std::str::FromStr;
+
+
+
 use thiserror::Error;
 use tracing::info;
-use tracing_subscriber::fmt::format;
+
 
 #[derive(Debug, Error)]
 pub enum ManifestError {

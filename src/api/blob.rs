@@ -1,14 +1,14 @@
-use crate::db::DBResult;
+
 use crate::DockerRegistryRS;
-use axum::body::{Body, HttpBody};
+use axum::body::{Body};
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{header, HeaderMap, HeaderName, StatusCode};
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use futures::StreamExt;
+
 use serde::{Deserialize, Serialize};
-use sha256::digest;
-use std::collections::HashMap;
-use tracing::{debug, info};
+
+
+use tracing::{info};
 
 pub async fn post(
     State(state): State<DockerRegistryRS>,
