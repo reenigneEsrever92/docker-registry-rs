@@ -21,3 +21,4 @@ thiserror = "1"
 futures = "0.3.30"
 uuid = { version = "1.7", features = ["v4"] }
 color-eyre = "0.6"
+anyhow = "1.0.80"
