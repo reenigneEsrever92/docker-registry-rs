@@ -96,9 +96,10 @@ pub async fn head(
     info!(?digest, "HEAD blob");
 
     match state.db.get_blob(&digest).await {
-        Ok(_) => Response::builder()
+        Ok((size, _path)) => Response::builder()
             .status(StatusCode::OK)
             .header("Docker-Content-Digest", digest)
+            .header(header::CONTENT_LENGTH, size)
             .body(Body::empty())
             .unwrap(),
         Err(_) => Response::builder()

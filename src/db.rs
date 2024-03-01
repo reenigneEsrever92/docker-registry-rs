@@ -12,7 +12,7 @@ use uuid::Uuid;
 pub const REGISTRY_PATH: &str = ".local/share/registry-rs";
 pub const REPOSITORY_FOLDER: &str = "repositories";
 pub const UPLOADS_FOLDER: &str = "_uploads";
-pub const LAYERS_FOLDER: &str = "_layers";
+pub const REFERENCES_FOLDER: &str = "_refs";
 pub const BLOB_FOLDER: &str = "blobs";
 
 #[derive(Debug, Error)]
@@ -57,13 +57,29 @@ impl FilesystemDB {
         Self { config }
     }
 
+    pub(crate) async fn get_references(&self, name: &str) -> DBResult<Option<Vec<String>>> {
+        let repository_path = self.get_references_path(name);
+
+        if tokio::fs::try_exists(&repository_path).await? {
+            let mut file = tokio::fs::read_dir(&repository_path).await?;
+            let mut references = Vec::new();
+
+            while let Some(file) = file.next_entry().await? {
+                references.push(file.file_name().into_string().unwrap());
+            }
+
+            Ok(Some(references))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn create_manifest(
         &self,
         name: &str,
         reference: &str,
         manifest: &str,
     ) -> DBResult<String> {
-        let digest = sha256::digest(manifest);
         let formatted_digest = format!("sha256:{}", sha256::digest(manifest));
         let path = self.get_blob_path(&formatted_digest)?;
 
@@ -79,14 +95,16 @@ impl FilesystemDB {
         tokio::fs::create_dir_all(PathBuf::from(&path).parent().unwrap()).await?;
         tokio::fs::write(path, manifest).await?;
 
-        Ok(digest)
+        Ok(formatted_digest)
     }
 
-    pub async fn get_blob(&self, digest: &str) -> DBResult<()> {
+    pub async fn get_blob(&self, digest: &str) -> DBResult<(u64, String)> {
         let blob_path = self.get_blob_path(digest)?;
 
-        if tokio::fs::try_exists(blob_path).await? {
-            Ok(())
+        if tokio::fs::try_exists(&blob_path).await? {
+            let file = tokio::fs::File::open(&blob_path).await?;
+
+            Ok((file.metadata().await?.len(), blob_path))
         } else {
             Err(DBError::BlobNotExists {
                 digest: digest.to_string(),
@@ -177,12 +195,16 @@ impl FilesystemDB {
         }
     }
 
-    fn get_repository_folder(&self, name: &str) -> String {
+    fn get_references_path(&self, name: &str) -> String {
+        format!("{}/{REFERENCES_FOLDER}/", self.get_repository_path(name))
+    }
+
+    fn get_repository_path(&self, name: &str) -> String {
         format!("{}/{REPOSITORY_FOLDER}/{name}", self.config.base_path)
     }
 
     fn get_upload_path(&self, name: &str, id: &str) -> String {
-        format!("{}/{UPLOADS_FOLDER}/{id}", self.get_repository_folder(name))
+        format!("{}/{UPLOADS_FOLDER}/{id}", self.get_repository_path(name))
     }
 
     fn get_blob_path(&self, digest: &str) -> DBResult<String> {
