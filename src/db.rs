@@ -8,6 +8,7 @@ use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tracing::debug;
 use uuid::Uuid;
+use crate::model::ManifestV2Schema2;
 
 pub const REGISTRY_PATH: &str = ".local/share/registry-rs";
 pub const REPOSITORY_FOLDER: &str = "repositories";
@@ -51,10 +52,27 @@ pub struct FilesystemDB {
     config: FilesystemDBConfig,
 }
 
+impl FilesystemDB {}
+
 impl FilesystemDB {
     #[allow(unused)]
     pub fn new(config: FilesystemDBConfig) -> Self {
         Self { config }
+    }
+
+    pub(crate) async fn get_manifest(&self, name: &str, reference: &str) -> DBResult<Option<(u64, String, ManifestV2Schema2)>> {
+        let reference_path = self.get_reference_path(name, reference);
+
+        if tokio::fs::try_exists(&reference_path).await? {
+            let digest = tokio::fs::read_to_string(&reference_path).await?;
+            let (size, path) = self.get_blob(&digest).await?;
+            let json = tokio::fs::read_to_string(&path).await?;
+            let manifest = serde_json::from_str::<ManifestV2Schema2>(&json).unwrap();
+
+            Ok(Some((size, digest, manifest)))
+        } else {
+            Ok(None)
+        }
     }
 
     pub(crate) async fn get_references(&self, name: &str) -> DBResult<Option<Vec<String>>> {
@@ -161,13 +179,14 @@ impl FilesystemDB {
     pub async fn write_upload<D>(
         &self,
         name: &str,
-        id: &str,
+        upload_id: &str,
         mut data: D,
     ) -> DBResult<(usize, usize)>
     where
         D: Stream<Item = Result<Bytes, Error>> + Unpin,
     {
-        let mut file = tokio::fs::File::create(self.get_upload_path(name, id)).await?;
+        let upload_path = self.get_upload_path(name, upload_id);
+        let mut file = tokio::fs::File::create(&upload_path).await?;
 
         let bytes_in_file = file.metadata().await?.len() as usize;
         let mut bytes_written = 0;
@@ -180,7 +199,7 @@ impl FilesystemDB {
             file.write_all(&bytes).await?;
         }
 
-        debug!(?bytes_written, "Written bytes");
+        debug!(?name, ?upload_id, ?upload_path, ?bytes_written, "Written bytes");
 
         file.flush().await?;
 
@@ -193,6 +212,13 @@ impl FilesystemDB {
         } else {
             Err(DBError::InvalidDigest(digest.to_string()))
         }
+    }
+
+    fn get_reference_path(&self, name: &str, reference: &str) -> String {
+        format!(
+            "{}/{REFERENCES_FOLDER}/{reference}",
+            self.get_repository_path(name)
+        )
     }
 
     fn get_references_path(&self, name: &str) -> String {
@@ -233,5 +259,18 @@ impl FilesystemDB {
         }
 
         unsafe { Ok(format!("{:02x}", hasher.finalize())) }
+    }
+    pub(crate) async fn put_reference(
+        &self,
+        name: &str,
+        reference: &str,
+        digest: &str,
+    ) -> DBResult<String> {
+        let ref_path = self.get_reference_path(name, reference);
+
+        tokio::fs::create_dir_all(PathBuf::from(&ref_path).parent().unwrap()).await?;
+        tokio::fs::write(&ref_path, digest).await?;
+
+        Ok(ref_path)
     }
 }

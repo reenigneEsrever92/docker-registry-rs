@@ -1,4 +1,3 @@
-
 use crate::DockerRegistryRS;
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -7,11 +6,9 @@ use axum::response::{IntoResponse, Response};
 
 use dkregistry::reference::ReferenceParseError;
 
-
-
+use crate::api::ApiError;
 use thiserror::Error;
 use tracing::info;
-
 
 #[derive(Debug, Error)]
 pub enum ManifestError {
@@ -20,10 +17,26 @@ pub enum ManifestError {
 }
 
 pub async fn head(
-    State(_state): State<DockerRegistryRS>,
-    Path((_name, _reference)): Path<(String, String)>,
-) -> impl IntoResponse {
-    todo!()
+    State(state): State<DockerRegistryRS>,
+    Path((name, reference)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    info!(?name, ?reference, "HEAD manifest");
+
+    let digest = state.db.get_manifest(&name, &reference).await?;
+
+    match digest {
+        None => Ok(Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::empty())
+            .unwrap()),
+        Some((size, digest, manifest)) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("Docker-Content-Digest", digest)
+            .header(header::CONTENT_LENGTH, size)
+            .header(header::CONTENT_TYPE, manifest.media_type)
+            .body(Body::empty())
+            .unwrap()),
+    }
 }
 
 pub async fn put(
@@ -31,11 +44,17 @@ pub async fn put(
     Path((name, reference)): Path<(String, String)>,
     body: String,
 ) -> impl IntoResponse {
-    info!("PUT manifest");
+    info!(?name, ?reference, "PUT manifest");
 
     let digest = state
         .db
         .create_manifest(&name, &reference, &body)
+        .await
+        .unwrap();
+
+    let _repo_ref = state
+        .db
+        .put_reference(&name, &reference, &digest)
         .await
         .unwrap();
 
